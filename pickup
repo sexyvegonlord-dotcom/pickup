@@ -1,1 +1,503 @@
 
+--==================================================
+-- † AUTO PICKUP CONTROLLER
+-- 9 = Toggle Auto Pickup
+-- P = Force GUI Visible
+-- Reload-safe
+-- Automatically detects new ProximityPrompts
+--==================================================
+
+local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
+
+local player = Players.LocalPlayer
+local playerGui = player:WaitForChild("PlayerGui")
+
+local GUI_NAME = "AutoPickupController"
+
+--==================================================
+-- REMOVE OLD GUI
+--==================================================
+
+local oldGui = playerGui:FindFirstChild(GUI_NAME)
+
+if oldGui then
+    oldGui:Destroy()
+end
+
+--==================================================
+-- SETTINGS
+--==================================================
+
+local TOGGLE_KEY = Enum.KeyCode.Nine
+
+local PICKUP_INTERVAL = 0.05
+local MAX_DISTANCE = 100
+
+local autoPickup = false
+
+--==================================================
+-- GUI
+--==================================================
+
+local gui = Instance.new("ScreenGui")
+gui.Name = GUI_NAME
+gui.ResetOnSpawn = false
+gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+gui.DisplayOrder = 999999
+gui.Enabled = true
+gui.Parent = playerGui
+
+local main = Instance.new("Frame")
+main.Name = "Main"
+main.Size = UDim2.new(0, 310, 0, 180)
+main.Position = UDim2.new(0.5, -155, 0.5, -90)
+
+main.BackgroundColor3 = Color3.fromRGB(13, 13, 16)
+main.BorderSizePixel = 0
+main.Parent = gui
+
+local corner = Instance.new("UICorner")
+corner.CornerRadius = UDim.new(0, 10)
+corner.Parent = main
+
+local stroke = Instance.new("UIStroke")
+stroke.Color = Color3.fromRGB(90, 25, 25)
+stroke.Thickness = 1.5
+stroke.Parent = main
+
+--==================================================
+-- TOP BAR
+--==================================================
+
+local topBar = Instance.new("Frame")
+topBar.Size = UDim2.new(1, 0, 0, 48)
+topBar.BackgroundColor3 = Color3.fromRGB(19, 19, 23)
+topBar.BorderSizePixel = 0
+topBar.Parent = main
+
+local topCorner = Instance.new("UICorner")
+topCorner.CornerRadius = UDim.new(0, 10)
+topCorner.Parent = topBar
+
+local title = Instance.new("TextLabel")
+title.Size = UDim2.new(1, -20, 0, 25)
+title.Position = UDim2.new(0, 12, 0, 5)
+title.BackgroundTransparency = 1
+title.Text = "† AUTO PICKUP"
+title.TextColor3 = Color3.fromRGB(245, 245, 245)
+title.TextSize = 16
+title.Font = Enum.Font.GothamBold
+title.TextXAlignment = Enum.TextXAlignment.Left
+title.Parent = topBar
+
+local subtitle = Instance.new("TextLabel")
+subtitle.Size = UDim2.new(1, -20, 0, 18)
+subtitle.Position = UDim2.new(0, 12, 0, 27)
+subtitle.BackgroundTransparency = 1
+subtitle.Text = "9 to toggle  •  P to show"
+subtitle.TextColor3 = Color3.fromRGB(125, 125, 135)
+subtitle.TextSize = 10
+subtitle.Font = Enum.Font.Gotham
+subtitle.TextXAlignment = Enum.TextXAlignment.Left
+subtitle.Parent = topBar
+
+--==================================================
+-- STATUS
+--==================================================
+
+local statusLabel = Instance.new("TextLabel")
+statusLabel.Size = UDim2.new(1, -24, 0, 30)
+statusLabel.Position = UDim2.new(0, 12, 0, 60)
+statusLabel.BackgroundTransparency = 1
+statusLabel.Text = "●  AUTO PICKUP: OFF"
+statusLabel.TextColor3 = Color3.fromRGB(220, 70, 70)
+statusLabel.TextSize = 14
+statusLabel.Font = Enum.Font.GothamBold
+statusLabel.TextXAlignment = Enum.TextXAlignment.Left
+statusLabel.Parent = main
+
+--==================================================
+-- PROMPT COUNT
+--==================================================
+
+local countLabel = Instance.new("TextLabel")
+countLabel.Size = UDim2.new(1, -24, 0, 25)
+countLabel.Position = UDim2.new(0, 12, 0, 94)
+countLabel.BackgroundTransparency = 1
+countLabel.Text = "Proximity Prompts: 0"
+countLabel.TextColor3 = Color3.fromRGB(175, 175, 185)
+countLabel.TextSize = 12
+countLabel.Font = Enum.Font.Gotham
+countLabel.TextXAlignment = Enum.TextXAlignment.Left
+countLabel.Parent = main
+
+--==================================================
+-- INFO
+--==================================================
+
+local infoLabel = Instance.new("TextLabel")
+infoLabel.Size = UDim2.new(1, -24, 0, 35)
+infoLabel.Position = UDim2.new(0, 12, 0, 125)
+infoLabel.BackgroundTransparency = 1
+infoLabel.Text = "Scans the game for nearby E prompts"
+infoLabel.TextColor3 = Color3.fromRGB(105, 105, 115)
+infoLabel.TextSize = 10
+infoLabel.Font = Enum.Font.Gotham
+infoLabel.TextXAlignment = Enum.TextXAlignment.Left
+infoLabel.Parent = main
+
+--==================================================
+-- DRAGGING
+--==================================================
+
+local dragging = false
+local dragStart
+local startPosition
+
+topBar.InputBegan:Connect(function(input)
+
+    if input.UserInputType == Enum.UserInputType.MouseButton1 then
+
+        dragging = true
+        dragStart = input.Position
+        startPosition = main.Position
+
+        input.Changed:Connect(function()
+
+            if input.UserInputState == Enum.UserInputState.End then
+                dragging = false
+            end
+
+        end)
+
+    end
+
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+
+    if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
+
+        local delta = input.Position - dragStart
+
+        main.Position = UDim2.new(
+            startPosition.X.Scale,
+            startPosition.X.Offset + delta.X,
+
+            startPosition.Y.Scale,
+            startPosition.Y.Offset + delta.Y
+        )
+
+    end
+
+end)
+
+--==================================================
+-- FIND PROMPTS
+--==================================================
+
+local function getPrompts()
+
+    local prompts = {}
+
+    for _, object in ipairs(workspace:GetDescendants()) do
+
+        if object:IsA("ProximityPrompt") then
+
+            if object.Enabled then
+                table.insert(prompts, object)
+            end
+
+        end
+
+    end
+
+    return prompts
+
+end
+
+--==================================================
+-- DISTANCE CHECK
+--==================================================
+
+local function isNearby(prompt)
+
+    local character = player.Character
+
+    if not character then
+        return false
+    end
+
+    local root = character:FindFirstChild("HumanoidRootPart")
+
+    if not root then
+        return false
+    end
+
+    local parent = prompt.Parent
+
+    if not parent then
+        return false
+    end
+
+    local part
+
+    if parent:IsA("BasePart") then
+        part = parent
+
+    elseif parent:IsA("Attachment") then
+        part = parent.Parent
+
+    elseif parent:IsA("Model") then
+        part = parent.PrimaryPart
+            or parent:FindFirstChildWhichIsA("BasePart", true)
+    end
+
+    if not part or not part:IsA("BasePart") then
+        return false
+    end
+
+    local distance = (root.Position - part.Position).Magnitude
+
+    return distance <= MAX_DISTANCE
+
+end
+
+--==================================================
+-- FIRE PROMPT
+--==================================================
+
+local function activatePrompt(prompt)
+
+    if not prompt then
+        return
+    end
+
+    if not prompt.Parent then
+        return
+    end
+
+    if not prompt.Enabled then
+        return
+    end
+
+    if not isNearby(prompt) then
+        return
+    end
+
+    -- Executor-supported ProximityPrompt trigger
+    pcall(function()
+
+        if typeof(fireproximityprompt) == "function" then
+            fireproximityprompt(prompt)
+        end
+
+    end)
+
+end
+
+--==================================================
+-- UPDATE COUNT
+--==================================================
+
+local function updateCount()
+
+    local count = 0
+
+    for _, object in ipairs(workspace:GetDescendants()) do
+
+        if object:IsA("ProximityPrompt") then
+            count += 1
+        end
+
+    end
+
+    countLabel.Text = "Proximity Prompts: " .. tostring(count)
+
+end
+
+--==================================================
+-- AUTO PICKUP LOOP
+--==================================================
+
+task.spawn(function()
+
+    while true do
+
+        if autoPickup then
+
+            local prompts = getPrompts()
+
+            for _, prompt in ipairs(prompts) do
+
+                if not autoPickup then
+                    break
+                end
+
+                activatePrompt(prompt)
+
+                task.wait(PICKUP_INTERVAL)
+
+            end
+
+        end
+
+        task.wait(PICKUP_INTERVAL)
+
+    end
+
+end)
+
+--==================================================
+-- PROMPT DETECTION
+--==================================================
+
+workspace.DescendantAdded:Connect(function(object)
+
+    if object:IsA("ProximityPrompt") then
+
+        task.defer(updateCount)
+
+    end
+
+end)
+
+workspace.DescendantRemoving:Connect(function(object)
+
+    if object:IsA("ProximityPrompt") then
+
+        task.defer(updateCount)
+
+    end
+
+end)
+
+--==================================================
+-- COUNT UPDATE
+--==================================================
+
+task.spawn(function()
+
+    while true do
+
+        updateCount()
+
+        task.wait(1)
+
+    end
+
+end)
+
+--==================================================
+-- TOGGLE STATUS
+--==================================================
+
+local function setAutoPickup(state)
+
+    autoPickup = state
+
+    if autoPickup then
+
+        statusLabel.Text = "●  AUTO PICKUP: ON"
+        statusLabel.TextColor3 = Color3.fromRGB(70, 220, 100)
+
+        infoLabel.Text = "Scanning nearby E prompts..."
+
+    else
+
+        statusLabel.Text = "●  AUTO PICKUP: OFF"
+        statusLabel.TextColor3 = Color3.fromRGB(220, 70, 70)
+
+        infoLabel.Text = "Press 9 to start picking up items"
+
+    end
+
+end
+
+--==================================================
+-- KEYBINDS
+--==================================================
+
+UserInputService.InputBegan:Connect(function(input, processed)
+
+    if processed then
+        return
+    end
+
+    -- 9 = TOGGLE AUTO PICKUP
+    if input.KeyCode == TOGGLE_KEY then
+
+        setAutoPickup(not autoPickup)
+
+    end
+
+    -- P = FORCE GUI VISIBLE
+    if input.KeyCode == Enum.KeyCode.P then
+
+        gui.Parent = playerGui
+        gui.Enabled = true
+
+        main.Visible = true
+        topBar.Visible = true
+        title.Visible = true
+        subtitle.Visible = true
+        statusLabel.Visible = true
+        countLabel.Visible = true
+        infoLabel.Visible = true
+
+        gui.DisplayOrder = 999999
+
+    end
+
+end)
+
+--==================================================
+-- GUI WATCHDOG
+--==================================================
+
+task.spawn(function()
+
+    while true do
+
+        task.wait(0.25)
+
+        -- Put GUI back into PlayerGui
+        if gui.Parent ~= playerGui then
+            gui.Parent = playerGui
+        end
+
+        -- Keep GUI enabled
+        gui.Enabled = true
+
+        -- Keep it above normal ScreenGuis
+        gui.DisplayOrder = 999999
+
+    end
+
+end)
+
+--==================================================
+-- RESPAWN SUPPORT
+--==================================================
+
+player.CharacterAdded:Connect(function()
+
+    task.wait(1)
+
+    gui.Parent = playerGui
+    gui.Enabled = true
+
+end)
+
+--==================================================
+-- STARTUP
+--==================================================
+
+setAutoPickup(false)
+updateCount()
+
+print("† AUTO PICKUP CONTROLLER LOADED")
+print("9 = Toggle Auto Pickup")
+print("P = Force GUI Visible")
+print("Reload-safe GUI = ON")

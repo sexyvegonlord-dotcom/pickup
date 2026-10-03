@@ -1,10 +1,8 @@
-
 --==================================================
 -- † AUTO PICKUP CONTROLLER
 -- 9 = Toggle Auto Pickup
 -- P = Force GUI Visible
--- Reload-safe
--- Automatically detects new ProximityPrompts
+-- Maximum 500 prompts
 --==================================================
 
 local Players = game:GetService("Players")
@@ -31,8 +29,10 @@ end
 
 local TOGGLE_KEY = Enum.KeyCode.Nine
 
-local PICKUP_INTERVAL = 0.05
+local MAX_PROMPTS = 500
 local MAX_DISTANCE = 100
+
+local PICKUP_INTERVAL = 0.05
 
 local autoPickup = false
 
@@ -52,7 +52,6 @@ local main = Instance.new("Frame")
 main.Name = "Main"
 main.Size = UDim2.new(0, 310, 0, 180)
 main.Position = UDim2.new(0.5, -155, 0.5, -90)
-
 main.BackgroundColor3 = Color3.fromRGB(13, 13, 16)
 main.BorderSizePixel = 0
 main.Parent = gui
@@ -95,7 +94,7 @@ local subtitle = Instance.new("TextLabel")
 subtitle.Size = UDim2.new(1, -20, 0, 18)
 subtitle.Position = UDim2.new(0, 12, 0, 27)
 subtitle.BackgroundTransparency = 1
-subtitle.Text = "9 to toggle  •  P to show"
+subtitle.Text = "9 to toggle  •  P to show  •  MAX 500"
 subtitle.TextColor3 = Color3.fromRGB(125, 125, 135)
 subtitle.TextSize = 10
 subtitle.Font = Enum.Font.Gotham
@@ -118,14 +117,14 @@ statusLabel.TextXAlignment = Enum.TextXAlignment.Left
 statusLabel.Parent = main
 
 --==================================================
--- PROMPT COUNT
+-- COUNT
 --==================================================
 
 local countLabel = Instance.new("TextLabel")
 countLabel.Size = UDim2.new(1, -24, 0, 25)
 countLabel.Position = UDim2.new(0, 12, 0, 94)
 countLabel.BackgroundTransparency = 1
-countLabel.Text = "Proximity Prompts: 0"
+countLabel.Text = "Loaded: 0 / 500"
 countLabel.TextColor3 = Color3.fromRGB(175, 175, 185)
 countLabel.TextSize = 12
 countLabel.Font = Enum.Font.Gotham
@@ -140,7 +139,7 @@ local infoLabel = Instance.new("TextLabel")
 infoLabel.Size = UDim2.new(1, -24, 0, 35)
 infoLabel.Position = UDim2.new(0, 12, 0, 125)
 infoLabel.BackgroundTransparency = 1
-infoLabel.Text = "Scans the game for nearby E prompts"
+infoLabel.Text = "Only the 500 closest prompts are processed."
 infoLabel.TextColor3 = Color3.fromRGB(105, 105, 115)
 infoLabel.TextSize = 10
 infoLabel.Font = Enum.Font.Gotham
@@ -194,23 +193,112 @@ UserInputService.InputChanged:Connect(function(input)
 end)
 
 --==================================================
--- FIND PROMPTS
+-- GET ROOT
 --==================================================
 
-local function getPrompts()
+local function getRoot()
 
-    local prompts = {}
+    local character = player.Character
 
+    if not character then
+        return nil
+    end
+
+    return character:FindFirstChild("HumanoidRootPart")
+
+end
+
+--==================================================
+-- GET PROMPT POSITION
+--==================================================
+
+local function getPromptPosition(prompt)
+
+    local parent = prompt.Parent
+
+    if not parent then
+        return nil
+    end
+
+    if parent:IsA("BasePart") then
+        return parent.Position
+    end
+
+    if parent:IsA("Attachment") then
+        return parent.WorldPosition
+    end
+
+    if parent:IsA("Model") then
+
+        local part =
+            parent.PrimaryPart
+            or parent:FindFirstChildWhichIsA("BasePart", true)
+
+        if part then
+            return part.Position
+        end
+
+    end
+
+    return nil
+
+end
+
+--==================================================
+-- GET MAX 500 CLOSEST PROMPTS
+--==================================================
+
+local function getClosestPrompts()
+
+    local root = getRoot()
+
+    if not root then
+        return {}
+    end
+
+    local promptData = {}
+
+    -- Scan prompts
     for _, object in ipairs(workspace:GetDescendants()) do
 
-        if object:IsA("ProximityPrompt") then
+        if object:IsA("ProximityPrompt")
+            and object.Enabled then
 
-            if object.Enabled then
-                table.insert(prompts, object)
+            local position = getPromptPosition(object)
+
+            if position then
+
+                local distance =
+                    (root.Position - position).Magnitude
+
+                if distance <= MAX_DISTANCE then
+
+                    table.insert(promptData, {
+                        prompt = object,
+                        distance = distance
+                    })
+
+                end
+
             end
 
         end
 
+    end
+
+    -- Sort closest first
+    table.sort(promptData, function(a, b)
+        return a.distance < b.distance
+    end)
+
+    -- Limit to 500
+    local prompts = {}
+
+    local amount =
+        math.min(#promptData, MAX_PROMPTS)
+
+    for i = 1, amount do
+        prompts[i] = promptData[i].prompt
     end
 
     return prompts
@@ -218,54 +306,7 @@ local function getPrompts()
 end
 
 --==================================================
--- DISTANCE CHECK
---==================================================
-
-local function isNearby(prompt)
-
-    local character = player.Character
-
-    if not character then
-        return false
-    end
-
-    local root = character:FindFirstChild("HumanoidRootPart")
-
-    if not root then
-        return false
-    end
-
-    local parent = prompt.Parent
-
-    if not parent then
-        return false
-    end
-
-    local part
-
-    if parent:IsA("BasePart") then
-        part = parent
-
-    elseif parent:IsA("Attachment") then
-        part = parent.Parent
-
-    elseif parent:IsA("Model") then
-        part = parent.PrimaryPart
-            or parent:FindFirstChildWhichIsA("BasePart", true)
-    end
-
-    if not part or not part:IsA("BasePart") then
-        return false
-    end
-
-    local distance = (root.Position - part.Position).Magnitude
-
-    return distance <= MAX_DISTANCE
-
-end
-
---==================================================
--- FIRE PROMPT
+-- ACTIVATE PROMPT
 --==================================================
 
 local function activatePrompt(prompt)
@@ -282,11 +323,6 @@ local function activatePrompt(prompt)
         return
     end
 
-    if not isNearby(prompt) then
-        return
-    end
-
-    -- Executor-supported ProximityPrompt trigger
     pcall(function()
 
         if typeof(fireproximityprompt) == "function" then
@@ -294,26 +330,6 @@ local function activatePrompt(prompt)
         end
 
     end)
-
-end
-
---==================================================
--- UPDATE COUNT
---==================================================
-
-local function updateCount()
-
-    local count = 0
-
-    for _, object in ipairs(workspace:GetDescendants()) do
-
-        if object:IsA("ProximityPrompt") then
-            count += 1
-        end
-
-    end
-
-    countLabel.Text = "Proximity Prompts: " .. tostring(count)
 
 end
 
@@ -327,7 +343,13 @@ task.spawn(function()
 
         if autoPickup then
 
-            local prompts = getPrompts()
+            local prompts = getClosestPrompts()
+
+            countLabel.Text =
+                "Loaded: "
+                .. tostring(#prompts)
+                .. " / "
+                .. tostring(MAX_PROMPTS)
 
             for _, prompt in ipairs(prompts) do
 
@@ -350,47 +372,7 @@ task.spawn(function()
 end)
 
 --==================================================
--- PROMPT DETECTION
---==================================================
-
-workspace.DescendantAdded:Connect(function(object)
-
-    if object:IsA("ProximityPrompt") then
-
-        task.defer(updateCount)
-
-    end
-
-end)
-
-workspace.DescendantRemoving:Connect(function(object)
-
-    if object:IsA("ProximityPrompt") then
-
-        task.defer(updateCount)
-
-    end
-
-end)
-
---==================================================
--- COUNT UPDATE
---==================================================
-
-task.spawn(function()
-
-    while true do
-
-        updateCount()
-
-        task.wait(1)
-
-    end
-
-end)
-
---==================================================
--- TOGGLE STATUS
+-- TOGGLE
 --==================================================
 
 local function setAutoPickup(state)
@@ -400,16 +382,20 @@ local function setAutoPickup(state)
     if autoPickup then
 
         statusLabel.Text = "●  AUTO PICKUP: ON"
-        statusLabel.TextColor3 = Color3.fromRGB(70, 220, 100)
+        statusLabel.TextColor3 =
+            Color3.fromRGB(70, 220, 100)
 
-        infoLabel.Text = "Scanning nearby E prompts..."
+        infoLabel.Text =
+            "Processing the 500 closest prompts..."
 
     else
 
         statusLabel.Text = "●  AUTO PICKUP: OFF"
-        statusLabel.TextColor3 = Color3.fromRGB(220, 70, 70)
+        statusLabel.TextColor3 =
+            Color3.fromRGB(220, 70, 70)
 
-        infoLabel.Text = "Press 9 to start picking up items"
+        infoLabel.Text =
+            "Press 9 to start picking up items."
 
     end
 
@@ -425,26 +411,19 @@ UserInputService.InputBegan:Connect(function(input, processed)
         return
     end
 
-    -- 9 = TOGGLE AUTO PICKUP
+    -- 9 = TOGGLE
     if input.KeyCode == TOGGLE_KEY then
 
         setAutoPickup(not autoPickup)
 
     end
 
-    -- P = FORCE GUI VISIBLE
+    -- P = SHOW GUI
     if input.KeyCode == Enum.KeyCode.P then
 
         gui.Parent = playerGui
         gui.Enabled = true
-
         main.Visible = true
-        topBar.Visible = true
-        title.Visible = true
-        subtitle.Visible = true
-        statusLabel.Visible = true
-        countLabel.Visible = true
-        infoLabel.Visible = true
 
         gui.DisplayOrder = 999999
 
@@ -462,15 +441,11 @@ task.spawn(function()
 
         task.wait(0.25)
 
-        -- Put GUI back into PlayerGui
         if gui.Parent ~= playerGui then
             gui.Parent = playerGui
         end
 
-        -- Keep GUI enabled
         gui.Enabled = true
-
-        -- Keep it above normal ScreenGuis
         gui.DisplayOrder = 999999
 
     end
@@ -478,7 +453,7 @@ task.spawn(function()
 end)
 
 --==================================================
--- RESPAWN SUPPORT
+-- RESPAWN
 --==================================================
 
 player.CharacterAdded:Connect(function()
@@ -491,13 +466,12 @@ player.CharacterAdded:Connect(function()
 end)
 
 --==================================================
--- STARTUP
+-- START
 --==================================================
 
 setAutoPickup(false)
-updateCount()
 
 print("† AUTO PICKUP CONTROLLER LOADED")
-print("9 = Toggle Auto Pickup")
-print("P = Force GUI Visible")
-print("Reload-safe GUI = ON")
+print("Maximum prompts: 500")
+print("9 = Toggle")
+print("P = Show GUI")
